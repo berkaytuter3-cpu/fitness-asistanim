@@ -1,47 +1,60 @@
 import streamlit as st
 import datetime
+import requests
+import pandas as pd
 
-# Sayfa Ayarları
+SUPABASE_URL = "https://cyienwazvmnlbxsondwq.supabase.co"
+SUPABASE_KEY = "sb_publishable_kNTUKDuw29M43goDPsFzcw_W7Y4EvFL"
+
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json"
+}
+
 st.set_page_config(page_title="Fitness Asistanım", page_icon="💪", layout="wide")
-
 st.title("💪 Kişisel Fitness Takip Paneli")
-st.markdown("Fitness hayatını düzene sokacak kişisel merkezin.")
 st.write("---")
 
-st.sidebar.header("👤 Profilim")
-st.sidebar.info("Veri tabanı bağlandığında anlık kilonuz burada görünecek.")
+def veri_cek(tablo_adi):
+    res = requests.get(f"{SUPABASE_URL}/rest/v1/{tablo_adi}?order=id.desc", headers=HEADERS)
+    if res.status_code == 200:
+        return pd.DataFrame(res.json())
+    return pd.DataFrame()
 
-sekme1, sekme2, sekme3, sekme4 = st.tabs([
-    "🏋️‍♂️ Antrenman & Tekrar", "🏃‍♂️ Kardiyo", "🍎 Beslenme", "📈 Kilo Takibi"
-])
+st.sidebar.header("👤 Profilim")
+kilo_df = veri_cek("kilo_takip")
+if not kilo_df.empty:
+    son_kilo = kilo_df.iloc[0]['kilo']
+    st.sidebar.metric(label="Anlık Kilonuz", value=f"{son_kilo} kg")
+else:
+    st.sidebar.info("Henüz kilo kaydı bulunamadı.")
+
+sekme1, sekme2, sekme3 = st.tabs(["🏋️‍♂️ Antrenman Geçmişi", "🏃‍♂️ Kardiyo Geçmişi", "📈 Kilo Gelişimi"])
 
 with sekme1:
-    st.header("Bugünkü Antrenman Durumu")
-    hareket = st.text_input("Egzersiz Adı (Örn: Squat)", placeholder="Egzersiz yaz...")
-    col1, col2 = st.columns(2)
-    with col1:
-        set_sayisi = st.number_input("Set Sayısı", min_value=1, value=4)
-    with col2:
-        tekrar_sayisi = st.number_input("Tekrar Sayısı", min_value=1, value=10)
-    agirlik = st.number_input("Ağırlık (kg)", min_value=0.0, value=60.0)
-    if st.button("Antrenmanı Kaydet"):
-        st.success(f"{hareket} kaydedildi!")
+    st.header("🏋️‍♂️ Antrenman Logları")
+    ant_df = veri_cek("antrenman_takip")
+    if not ant_df.empty:
+        st.dataframe(ant_df[['tarih', 'hareket_adi', 'set_sayisi', 'tekrar_sayisi', 'agirlik']], use_container_width=True)
+    else:
+        st.info("Henüz antrenman kaydı yok. Telegram botundan ekleyebilirsin!")
 
 with sekme2:
-    st.header("Kardiyo Seansı Ekle")
-    kardiyo_tipi = st.selectbox("Kardiyo Türü", ["Koşu Bandı", "Bisiklet", "Elliptical", "Yürüyüş"])
-    sure = st.number_input("Süre (Dakika)", min_value=1, value=20)
-    if st.button("Kardiyoyu Kaydet"):
-        st.success(f"{kardiyo_tipi} başarıyla eklendi!")
+    st.header("🏃‍♂️ Kardiyo Geçmişi")
+    kar_df = veri_cek("kardiyo_takip")
+    if not kar_df.empty:
+        st.dataframe(kar_df[['tarih', 'tur', 'sure', 'kalori']], use_container_width=True)
+    else:
+        st.info("Henüz kardiyo kaydı yok. Telegram botundan ekleyebilirsin!")
 
 with sekme3:
-    st.header("Günlük Beslenme ve Makrolar")
-    kalori = st.number_input("Alınan Kalori (kcal)", min_value=0, value=2000)
-    if st.button("Beslenmeyi Kaydet"):
-        st.success("Beslenme verileri kaydedildi!")
+    st.header("📈 Kilo Değişim Grafiği")
+    if not kilo_df.empty:
+        kilo_df['tarih'] = pd.to_datetime(kilo_df['tarih'])
+        kilo_df = kilo_df.sort_values('tarih')
+        st.line_chart(data=kilo_df, x='tarih', y='kilo')
+        st.dataframe(kilo_df[['tarih', 'kilo']], use_container_width=True)
+    else:
+        st.info("Grafik için henüz yeterli kilo verisi yok.")
 
-with sekme4:
-    st.header("Kilo ve Gelişim Takibi")
-    guncel_kilo = st.number_input("Bugünkü Kilonuz (kg)", min_value=30.0, value=75.0)
-    if st.button("Kiloyu Kaydet"):
-        st.success(f"Kilo kaydedildi!")
