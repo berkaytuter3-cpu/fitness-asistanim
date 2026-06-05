@@ -4,11 +4,19 @@ import requests
 import pandas as pd
 import telebot
 from threading import Thread
+import google.generativeai as genai
+import json
+import re
 
 # Şifreler ve Ayarlar
 TOKEN = "8967109165:AAH7BdP28D7UHVZ7TcuS8szYuae3yctNutM"
 SUPABASE_URL = "https://cyienwazvmnlbxsondwq.supabase.co"
 SUPABASE_KEY = "sb_publishable_kNTUKDuw29M43goDPsFzcw_W7Y4EvFL"
+GEMINI_KEY = "AQ.Ab8RN6I3gJDC9O7zcPLv2Bjx-QslZceTh6YkdmbechU7do2v1Q" # Senin gönderdiğin anahtar
+
+# Yapay Zeka Kurulumu
+genai.configure(api_key=GEMINI_KEY)
+model = genai.GenerativeModel('gemini-pro')
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -16,7 +24,7 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-# --- TELEGRAM BOT KISMI ---
+# --- TELEGRAM BOT KISMI (YAPAY ZEKA ENTEGRELİ) ---
 def botu_baslat():
     try:
         bot = telebot.TeleBot(TOKEN)
@@ -24,63 +32,85 @@ def botu_baslat():
         @bot.message_handler(commands=['start', 'help'])
         def send_welcome(message):
             hosgeldin = (
-                "💪 Merhaba Berkay! Fitness Asistanına hoş geldin.\n\n"
-                "Şu komutlarla veri kaydedebilirsin:\n"
-                "👉 `/kilo 75.5` -> Kilonu kaydeder.\n"
-                "👉 `/kardiyo Bisiklet 20 250` -> Kardiyo kaydeder.\n"
-                "👉 `/ant BenchPress 4 10 60` -> Antrenman kaydeder."
+                "💪 Berkay! Yapay Zeka Fitness Koçun göreve hazır.\n\n"
+                "Artık bota komut yazmak zorunda değilsin! Benimle tıpkı gerçek bir koç gibi normal cümlelerle konuşabilirsin.\n\n"
+                "Örnek: 'Koç bugün tartıldım 80 kiloyum, sonra salonda 4 set 12 tekrar 60 kilo bench bastım, üstüne 20 dk koştum' yaz, gerisini bana bırak!"
             )
             bot.reply_to(message, hosgeldin)
 
-        @bot.message_handler(commands=['kilo'])
-        def save_kilo(message):
+        @bot.message_handler(func=lambda message: True)
+        def handle_ai_message(message):
+            user_text = message.text
+            
+            # Yapay zekaya veriyi ayıklaması ve cevap vermesi için talimat veriyoruz
+            prompt = f"""
+            Sen Berkay'ın kişisel fitness ve bodybuilding koçusun. Samimi, motive edici, hafif sert ve profesyonel bir üslubun var.
+            Berkay sana bir mesaj gönderdi. Bu mesajdan eğer varsa antrenman, kilo veya kardiyo verilerini ayıklaman gerekiyor.
+            
+            Kullanıcının Mesajı: "{user_text}"
+            
+            GÖREV 1: Mesajın içindeki fitness verilerini SADECE aşağıdaki JSON formatında çıkar. Eğer veri yoksa boş bırak (null veya []).
+            {{
+                "kilo": null veya sayı (örn: 82.5),
+                "kardiyo": null veya {{ "tur": "Kosu", "sure": 20, "kalori": 250 }},
+                "antrenman": null veya [ {{ "hareket_adi": "BenchPress", "set_sayisi": 4, "tekrar_sayisi": 10, "agirlik": 80 }} ]
+            }}
+            Not: JSON formatında asla Türkçe karakter barındırma (KosuBandi, Squat vb. yap).
+            
+            GÖREV 2: Berkay'a bir fitness koçu gibi samimi, motive edici ve sorduğu soruları yanıtlayan bir cevap yaz.
+            
+            ÇIKTI FORMATI: Aşağıdaki şablonu BİREBİR koru. JSON ve CEVAP arasına '---' koy.
+            
+            JSON:
+            (Buraya sadece oluşturduğun JSON gelecek)
+            ---
+            CEVAP:
+            (Buraya Berkay'a vereceğin koçluk cevabı gelecek)
+            """
+            
             try:
-                kilo_degeri = float(message.text.split()[1])
-                data = {"kilo": kilo_degeri}
-                res = requests.post(f"{SUPABASE_URL}/rest/v1/kilo_takip", headers={**HEADERS, "Prefer": "return=minimal"}, json=data)
-                if res.status_code in [200, 201]:
-                    bot.reply_to(message, f"✅ Başarıyla kaydedildi! Bugünkü kilon: {kilo_degeri} kg.")
-                else:
-                    bot.reply_to(message, "❌ Veri tabanına kaydedilirken bir hata oluştu.")
-            except:
-                bot.reply_to(message, "⚠️ Hatalı kullanım! Örnek: `/kilo 75.5` şeklinde yazmalısın.")
+                response = model.generate_content(prompt)
+                ai_output = response.text
+                
+                # Çıktıyı parçala
+                parcalar = ai_output.split("---")
+                json_part = parcalar[0].replace("JSON:", "").strip()
+                cevap_part = parcalar[1].replace("CEVAP:", "").strip()
+                
+                # Veritabanına kaydetme işlemleri
+                data_json = json.loads(json_part)
+                kayit_mesaji = ""
+                
+                # Kilo Kaydı
+                if data_json.get("kilo"):
+                    k_data = {"kilo": float(data_json["kilo"])}
+                    requests.post(f"{SUPABASE_URL}/rest/v1/kilo_takip", headers={**HEADERS, "Prefer": "return=minimal"}, json=k_data)
+                    kayit_mesaji += f"\n📊 Kilo kaydedildi: {data_json['kilo']} kg"
+                    
+                # Kardiyo Kaydı
+                if data_json.get("kardiyo"):
+                    kard_data = data_json["kardiyo"]
+                    requests.post(f"{SUPABASE_URL}/rest/v1/kardiyo_takip", headers={**HEADERS, "Prefer": "return=minimal"}, json=kard_data)
+                    kayit_mesaji += f"\n🏃‍♂️ Kardiyo kaydedildi: {kard_data['tur']}"
+                    
+                # Antrenman Kaydı
+                if data_json.get("antrenman"):
+                    for ant in data_json["antrenman"]:
+                        requests.post(f"{SUPABASE_URL}/rest/v1/antrenman_takip", headers={**HEADERS, "Prefer": "return=minimal"}, json=ant)
+                    kayit_mesaji += f"\n🏋️‍♂️ Antrenman logları veri tabanına işlendi!"
 
-        @bot.message_handler(commands=['kardiyo'])
-        def save_kardiyo(message):
-            try:
-                parcalar = message.text.split()
-                tur = parcalar[1]
-                sure = int(parcalar[2])
-                kalori = int(parcalar[3])
-                data = {"tur": tur, "sure": sure, "kalori": kalori}
-                res = requests.post(f"{SUPABASE_URL}/rest/v1/kardiyo_takip", headers={**HEADERS, "Prefer": "return=minimal"}, json=data)
-                if res.status_code in [200, 201]:
-                    bot.reply_to(message, f"🏃‍♂️ Kardiyo kaydedildi: {tur}, {sure} dk, {kalori} kcal.")
-                else:
-                    bot.reply_to(message, "❌ Bir hata oluştu.")
-            except:
-                bot.reply_to(message, "⚠️ Hatalı kullanım! Örnek: `/kardiyo Bisiklet 25 300`")
-
-        @bot.message_handler(commands=['ant'])
-        def save_antrenman(message):
-            try:
-                parcalar = message.text.split()
-                hareket = parcalar[1]
-                set_s = int(parcalar[2])
-                tekrar = int(parcalar[3])
-                agirlik = float(parcalar[4])
-                data = {"hareket_adi": hareket, "set_sayisi": set_s, "tekrar_sayisi": tekrar, "agirlik": ag规律}
-                data = {"hareket_adi": hareket, "set_sayisi": set_s, "tekrar_sayisi": tekrar, "agirlik": agirlik}
-                res = requests.post(f"{SUPABASE_URL}/rest/v1/antrenman_takip", headers={**HEADERS, "Prefer": "return=minimal"}, json=data)
-                if res.status_code in [200, 201]:
-                    bot.reply_to(message, f"🏋️‍♂️ {hareket} kaydedildi! {set_s}x{tekrar} - {agirlik}kg.")
-                else:
-                    bot.reply_to(message, "❌ Bir hata oluştu.")
-            except:
-                bot.reply_to(message, "⚠️ Hatalı kullanım! Örnek: `/ant Squat 4 10 80`")
+                # Sonucu kullanıcıya gönder
+                tam_cevap = cevap_part
+                if kayit_mesaji:
+                    tam_cevap += f"\n\n🚨 *Sistem Notu:* {kayit_mesaji}"
+                    
+                bot.reply_to(message, tam_cevap, parse_mode="Markdown")
+                
+            except Exception as e:
+                bot.reply_to(message, "Koç şu an yoğun, birazdan tekrar dener misin? (Sistem veya şifre hatası oluştu.)")
 
         bot.infinity_polling(timeout=10, long_polling_timeout=5)
-    except Exception as e:
+    except:
         pass
 
 # Botu arka planda bir kereye mahsus çalıştırıyoruz
@@ -137,5 +167,6 @@ with sekme3:
         st.dataframe(kilo_df[['tarih', 'kilo']], use_container_width=True)
     else:
         st.info("Grafik için henüz yeterli kilo verisi yok.")
+
 
 
